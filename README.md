@@ -32,7 +32,7 @@ In ottica di espansione, il progetto prevede l'eventuale integrazione teorica di
 4. Aumento dell'acutanza ai bordi (*Acutance*) tramite *Unsharp Masking*.
 
 📂 **Struttura della Repository**
-*   `Dataset/`: Cartella contenente la sottocartella `images/` (169 MRI originali) e `masks/` (Ground Truth).
+*   `Dataset/`: Cartella contenente la sottocartella `images/` (169 MRI originali) e le relative `masks/`.
 *   `Src/`: File sorgente MATLAB (`.m`), inclusi il `main.m` orchestratore e le funzioni dei Moduli A e B.
 *   `Src/results/`: Maschere generate successivamente all'applicazione dell'algoritmo di segmentazione.
 *   `Src/workspace/`: Variabili di sessione e archivi `.mat` intermedi (Struct dei dati estratti).
