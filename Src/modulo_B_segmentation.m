@@ -1,39 +1,80 @@
-function [brain_mask, tumor_mask] = modulo_B_segmentation(img_in)
+function [brain_mask, tumor_mask, tumor_edges] = modulo_B_segmentation(img_in)
 % =========================================================================
-% Funzione modulo_B_segmentation.m (Responsabilità Studente 2)
-% Input: img_in (immagine pre-elaborata)
-% Output: brain_mask (maschera del solo cervello), tumor_mask (maschera del tumore)
+% Modulo B - Morfologia e Segmentazione (Responsabilità Andrea Patruno)
+% Implementazione: Sogliatura Iterativa, Ricostruzione e Gradiente
 % =========================================================================
+   
+    %% STEP 1: Sogliatura Iterativa
+    % 1. Stima iniziale della soglia (metà della media dell'immagine)
+    T1 = 0.5 * mean(img_in(:));
+    done = false;
 
-    %% STEP 1: Skull Stripping
-    % Binarizzazione per isolare la testa usando il metodo Otsu [6]
-    t = graythresh(img_in);
-    bw_head = img_in > t; % Matrice logica [6]
+    % 5. Ciclo iterativo finché la differenza non scende sotto 0.5
+    while ~done
+        % 2. Partiziona l'immagine in due gruppi (foreground e background)
+        g = img_in >= T1;
+        % 3 e 4. Calcola le medie mu1 e mu2 delle partizioni e trova il nuovo T
+        TNext = 0.5 * (mean(img_in(g)) + mean(img_in(~g)));
+        % Valuta la condizione di arresto
+        done = abs(T1 - TNext) < 0.5;
+        T1 = TNext;
+    end
+    t = TNext; % La nostra soglia finale ottimizzata
     
-    % Riempiamo i buchi all'interno della maschera [11]
-    bw_filled = imfill(bw_head, 'holes');
+    %% STEP 2: Skull Stripping  e Isolamento del Cervello
+    % Binarizziamo la testa e riempiamo i buchi
+    bw_head = img_in > t; 
+    bw_filled = imfill(bw_head, 'holes'); 
     
-    % Usiamo un'apertura per rimuovere connessioni al cranio o rumore [10, 12]
-    se_brain = strel('disk', 5);
-    brain_mask = imopen(bw_filled, se_brain);
+    % Erodiamo pesantemente la maschera per tagliare via 
+    % l'intera scatola cranica e il relativo bordo luminoso.
+    % (Un disco di raggio 12 o 15 elimina fisicamente il perimetro esterno prima 5)
+    se_erode = strel('disk', 12); 
+    brain_mask = imerode(bw_filled, se_erode); 
     
-    % Intensity Masking: Moltiplichiamo per estrarre solo il cervello in scala di grigi [3]
-    brain_only = img_in .* brain_mask; 
+    % Isoliamo solo il "cuore" del cervello, ora totalmente privo di cranio
+    inner_brain = img_in .* double(brain_mask); 
     
-    %% STEP 2: Segmentazione del Tumore
-    % Ricalcoliamo una soglia solo sui pixel del cervello (che sono > 0)
-    brain_pixels = brain_only(brain_mask > 0);
-    t_tumor = graythresh(brain_pixels);
+    %% STEP 3: Ricostruzione Morfologica del Tumore
+    % Estraiamo i pixel appartenenti solo al cuore del cervello
+    inner_pixels = inner_brain(brain_mask);
     
-    % Binarizziamo per trovare le zone più luminose (possibile tumore)
-    bw_tumor_iniziale = brain_only > t_tumor;
+    % Ora il tumore è garantito essere la parte più chiara.
+    % Usiamo la funzione base di Otsu per trovare la soglia.
+    t_tumor = graythresh(inner_pixels);
     
-    %% STEP 3: Apertura tramite Ricostruzione Morfologica [10]
-    % Creiamo il marker erodendo per eliminare falsi positivi (rumore piccolo)
-    se_tumor = strel('disk', 3);
-    marker = imerode(bw_tumor_iniziale, se_tumor);
+    % Creiamo il MARKER: i picchi certissimi del tumore (soglia alzata del 20%)
+    marker = inner_brain > (t_tumor * 1.2);
     
-    % Ricostruiamo esattamente la forma originale partendo dal marker [10]
-    % imreconstruct preserva i bordi meglio di una semplice dilatazione
-    tumor_mask = imreconstruct(marker, bw_tumor_iniziale);
+    % Creiamo la MASK: l'area generale del tumore
+    mask = inner_brain > t_tumor;
+    
+    % Ricostruzione Morfologica
+    tumor_mask = imreconstruct(marker, mask);
+    
+    %% STEP 4: Post-Processing Morfologico (Pulizia)
+    % 1. Riempi i buchi interni al tumore per renderlo un solido perfetto
+    tumor_mask = imfill(tumor_mask, 'holes'); 
+    
+    % 2. Isola la massa più grande (rimozione dei falsi positivi sparsi)
+    CC_noise = bwconncomp(tumor_mask); 
+    if CC_noise.NumObjects > 1
+        numPixels = cellfun(@numel, CC_noise.PixelIdxList);
+        [~, idx_max] = max(numPixels);
+        tumor_mask_pulita = false(size(tumor_mask));
+        tumor_mask_pulita(CC_noise.PixelIdxList{idx_max}) = true;
+        tumor_mask = tumor_mask_pulita;
+    end
+    
+    % Apertura per levigare i bordi
+    se_smooth = strel('disk', 3); 
+    tumor_mask = imopen(tumor_mask, se_smooth); 
+    
+    %% STEP 5: Estrazione dei Contorni (Gradiente Morfologico)
+    % Calcoliamo i bordi finali sulla maschera perfettamente pulita
+    se_edge = ones(3,3); 
+    bordi_spessi = imdilate(tumor_mask, se_edge) - imerode(tumor_mask, se_edge);
+ 
+    % Applicazione del "Thinning" per garantire la Minimal Response (1 pixel)
+    tumor_edges = bwmorph(bordi_spessi, 'thin', Inf); 
 end
